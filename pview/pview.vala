@@ -13,7 +13,7 @@
 /*****************************************************************************
 The MIT License
 
-Copyright (c) 2008 Copyright Owner
+Copyright (c) 2009 Robert Thomson, http://xri.net/=rmt
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -34,75 +34,77 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 *****************************************************************************/
 
+using GLib.Random;
 using GLib;
 using Gtk;
 using Gdk;
-using Gee;
-using GLib.Random;
 
-class CircularIter<G> : GLib.Object { // Gee.Iterator {
-    private int pos = 0;
-    private Gee.List<G> list;
+class CircularIter<G> : GLib.Object {
+    private weak GLib.List<G> pos = null;
+    private weak GLib.List<G> _first = null;
 
-    construct {
-    }
-
-    public CircularIter (Gee.List<G> list) {
-        this.list = list;
+    public CircularIter (GLib.List<G> list) {
+        this._first = list;
+        this.pos = list;
     }
 
     public new G get () {
-        if(list.size == 0) {
-            return null;
-        }
-        if(pos >= list.size)
-            pos = 0; // by setting this back to zero, we make it circular
-        if(pos < 0)
-            pos = list.size - 1;
-        return list.get(pos);
+        if(pos != null)
+            return pos.data;
+        return null;
     }
 
     public bool next () {
-        pos += 1;
+        if(pos != null) {
+            pos = pos.next;
+            if(pos == null) {
+                pos = _first;
+            }
+        }
         return true;
     }
 
     public bool prev () {
-        pos -= 1;
+        if(pos != null) {
+            pos = pos.prev;
+            if(pos == null)
+                pos = _first.last(); // slow op, but doesn't occur too often
+        }
         return true;
     }
 
     public bool first () {
-        pos = 0;
+        pos = _first;
         return true;
     }
 
     public bool last () {
-        pos = list.size - 1;
+        if(pos != null)
+            pos = pos.last();
+        else if(_first != null)
+            pos = _first.last();
         return true;
-    }
-
-    public int position {
-        get {
-            return pos;
-        }
     }
 
     public bool delete () {
-        if(pos >= list.size || pos < 0)
+        if(pos == null)
             return false;
-        list.remove_at(pos);
-        get(); // adjust position if needed
+        weak List<G> next = pos.next != null ? pos.next : pos.prev;
+        if(pos == _first)
+            _first = next;
+        pos.delete_link(pos);
+        pos = next;
         return true;
     }
 }
+
 
 class Browser : Gtk.Window
 {
     int width = 0; // screen.width
     int height = 0; // screen.height
     Gtk.Image image;
-    private Gee.ArrayList<string> deletelist = new Gee.ArrayList<string> ();
+    private GLib.List<string> deletelist = new GLib.List<string> ();
     private CircularIter<string> iter;
     int counter = 0; // slideshow: if counter == countermax, show next image
     const int TICK = 250; // how often on_timeout is called
@@ -273,7 +275,7 @@ class Browser : Gtk.Window
 
         filename = iter.get();
         while(filename != null && Path.get_dirname(filename) == path) {
-            deletelist.add(filename);
+            deletelist.append(filename);
             iter.delete();
             filename = iter.get();
         }
@@ -290,7 +292,7 @@ class Browser : Gtk.Window
             return;
         if(verbose)
             stdout.printf("Tagged for deletion: %s\n", filename);
-        deletelist.add(filename);
+        deletelist.append(filename);
         iter.delete();
         counter = 0;
         show_image();
@@ -304,7 +306,7 @@ class Browser : Gtk.Window
             if(deleteokay) {
                 FileUtils.unlink(filename);
             } else {
-                stdout.printf("rm \"%s\"", filename);
+                stdout.printf("rm \"%s\"\n", filename);
             }
             path = Path.get_dirname(filename);
             if(path != lastpath && lastpath != null) {
@@ -458,10 +460,11 @@ class Browser : Gtk.Window
 
     private delegate bool matcher(string s);
 
-    private static void resultwalker(string dir, matcher m, ref Gee.List<string> result) {
+    private static void resultwalker(string dir, matcher m, ref GLib.List<string> result) {
         try {
             Dir d = Dir.open(dir);
-            Gee.List<string> dirlist = (Gee.List<string>)new Gee.ArrayList<string> ();
+            string[] dirlist = new string[64];
+            int dirlen = 0;
             string s = null;
             var filenames = new GLib.List<string> ();
             while((s = d.read_name()) != null) {
@@ -469,21 +472,25 @@ class Browser : Gtk.Window
                     continue;
                 string fs = Path.build_filename(dir, s);
                 if(FileUtils.test(fs, FileTest.IS_DIR)) {
-                    dirlist.add(fs);
+                    if(dirlen >= dirlist.length)
+                        dirlist.resize(dirlist.length + 64);
+                    dirlist[dirlen] = fs;
+                    dirlen++;
                 } else if(FileUtils.test(fs, FileTest.IS_REGULAR)) {
                     if(m(fs))
                         filenames.insert_sorted(fs, (GLib.CompareFunc)ImageSorter);
                 }
             }
             foreach(string fn in filenames) {
-                result.add(fn);
+                result.append(fn);
             }
+            dirlist.resize(dirlen);
             if(random) {
-                for(int i=0; i<dirlist.size; i++) {
-                    string tmp = dirlist.get(i);
-                    int ran = GLib.Random.int_range(0, dirlist.size);
-                    dirlist.set(i, dirlist.get(ran));
-                    dirlist.set(ran, tmp);
+                for(int i=0; i<dirlen; i++) {
+                    string tmp = dirlist[i];
+                    int ran = GLib.Random.int_range(0, dirlen);
+                    dirlist[i] = dirlist[ran];
+                    dirlist[ran] = tmp;
                 }
             }
             foreach(string dd in dirlist) {
@@ -546,7 +553,7 @@ class Browser : Gtk.Window
         var browser = new Browser();
         Gtk.main_iteration(); // show the window
 
-        Gee.List<string> *imgs = (Gee.List<string>)new Gee.ArrayList<string> ();
+        GLib.List<string> *imgs = (GLib.List<string>)new GLib.List<string> ();
 
         for(int arg=1; arg<args.length; arg++) {
             resultwalker(args[arg], (a) =>
