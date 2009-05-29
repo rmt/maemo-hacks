@@ -1,0 +1,23 @@
+Source: pview
+Section: user/multimedia
+Priority: extra
+Maintainer: Robert Thomson <rmt-maemo@corporatism.org>
+Build-Depends: debhelper (>= 5)
+Standards-Version: 3.7.3
+Homepage: http://github.org/rmt/maemo-hacks/
+
+Package: pview
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Build-Depends: vala (>= 0.7.0)
+Description: an insanely fast fullscreen touchscreen-only image viewer
+ pview is a bare-bones full screen image viewer for your Nokia N800 or N810.
+ It takes a list of directories as arguments, and will recursively add the
+ directories of images, optionally randomising the directories.
+ .
+ All images are scaled to the maximum screen size - there is no scrolling
+ or zooming.
+ .
+ It has simple touch-screen controls (invisible) and a slideshow feature.
+ .
+ There is no menu item, as it is meant to be started with arguments.

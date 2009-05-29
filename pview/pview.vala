@@ -170,7 +170,7 @@ class Browser : Gtk.Window
     {
         if(iter.get() == null) {
             stdout.printf("show_image() called with null pointer.\n");
-            return;
+            gtk.quit_main();
         }
         try
         {
