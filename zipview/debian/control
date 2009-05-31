@@ -1,0 +1,23 @@
+Source: zipview
+Section: user/multimedia
+Priority: extra
+Maintainer: Robert Thomson <rmt-maemo@corporatism.org>
+Build-Depends: debhelper (>= 5)
+Standards-Version: 3.7.3
+Homepage: http://github.org/rmt/maemo-hacks/
+
+Package: zipview
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Build-Depends: vala (>= 0.7.0)
+Description: an insanely fast fullscreen touchscreen-only archived-image viewer
+ zipview is a bare-bones full screen image viewer for your Nokia N800 or N810.
+ It takes a single archive (.zip, .tar.gz, cpio, or anything that libarchive
+ supports) as an argument, and displays all the images inside it.
+ .
+ All images are scaled to the maximum screen size - there is no scrolling
+ or zooming.
+ .
+ It has simple touch-screen controls (invisible) and a slideshow feature.
+ .
+ There is no menu or file chooser, as it is meant to be started with arguments.

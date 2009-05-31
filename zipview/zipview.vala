@@ -6,8 +6,6 @@
  *    Quickly jump between image subdirectories (PageUp/PageDown)
  *    Sorts files in dir's based on the last numbers found in filename
  *    Touchscreen mode (use -t on commandline)
- *    Easily delete individual files or entire subdir's
- *    Delete mode is not enabled by default (use -d on commandline)
  */
 
 /*****************************************************************************
@@ -38,13 +36,87 @@ using GLib.Random;
 using GLib;
 using Gtk;
 using Gdk;
+using Archive;
+
+class ZipSource {
+    string archive = null;
+
+    public ZipSource(string archive) {
+        this.archive = archive;
+    }
+
+    public GLib.List<string> filelist() {
+        var r = new Archive.Read();
+        r.support_format_all();
+        r.support_compression_all();
+        int res = r.open_filename( archive );
+        var imgs = new GLib.List<string> ();
+        if( 0 != res ) {
+            stderr.printf("Could not open archive.\n");
+            return imgs;
+        }
+
+        Archive.Entry e = null;
+        while( 0 == r.next_header(&e) ) {
+            imgs.append(e.pathname());
+        }
+        return imgs;
+    }
+
+    public Gdk.Pixbuf? get_pixbuf(string path) throws GLib.Error
+    {
+        Archive.Entry e = null;
+        var r = new Archive.Read();
+        r.support_format_all();
+        r.support_compression_all();
+
+        int res = r.open_filename( archive );
+        if( 0 != res ) {
+            stderr.printf("Could not open archive.\n");
+            return null;
+        }
+
+        while( 0 == r.next_header(&e) ) {
+            if( e.pathname() == path ) {
+                var l = new PixbufLoader();
+                var buf = new uchar[4096];
+                var size = 0L;
+                while(true) {
+                    size = r.data(buf);
+                    if(size == 0L)
+                        break;
+                    l.write(buf);
+                }
+                r.close();
+                l.close();
+                return l.get_pixbuf();
+            }
+        }
+        stderr.printf("Could not find file in archive.  Has the archive changed?\n");
+        return null;
+    }
+
+    public Gdk.Pixbuf get_pixbuf_at_size(string path, int screen_width, int screen_height)
+    throws GLib.Error
+    {
+        var pb = get_pixbuf(path);
+        var img_width = pb.get_width();
+        var img_height = pb.get_height();
+        float scale_x = screen_width / (float)img_width;
+        float scale_y = screen_height / (float)img_height;
+        float scale = scale_x < scale_y ? scale_x : scale_y;
+        return pb.scale_simple((int)(scale*img_width), (int)(scale*img_height), Gdk.InterpType.HYPER);
+    }
+}
 
 class CircularIter<G> : GLib.Object {
     private weak GLib.List<G> pos = null;
     private weak GLib.List<G> _first = null;
+    private weak GLib.List<G> _last = null;
 
     public CircularIter (GLib.List<G> list) {
         this._first = list;
+        this._last = null;
         this.pos = list;
     }
 
@@ -79,23 +151,16 @@ class CircularIter<G> : GLib.Object {
     }
 
     public bool last () {
-        if(pos != null)
+        if(_last != null)
+            pos = _last;
+        else if(pos != null)
             pos = pos.last();
         else if(_first != null)
             pos = _first.last();
+        _last = pos;
         return true;
     }
 
-    public bool delete () {
-        if(pos == null)
-            return false;
-        weak List<G> next = pos.next != null ? pos.next : pos.prev;
-        if(pos == _first)
-            _first = next;
-        pos.delete_link(pos);
-        pos = next;
-        return true;
-    }
 }
 
 
@@ -104,14 +169,13 @@ class Browser : Gtk.Window
     int width = 0; // screen.width
     int height = 0; // screen.height
     Gtk.Image image;
-    private GLib.List<string> deletelist = new GLib.List<string> ();
     private CircularIter<string> iter;
+    private ZipSource zipsource;
     int counter = 0; // slideshow: if counter == countermax, show next image
     const int TICK = 250; // how often on_timeout is called
     int countermax = 8; // TICK * countermax is slideshow delay
 
     static bool slideshow = false; // slideshow mode active
-    static bool deleteokay = false; // if enabled, delete files on disk
     static bool verbose = false;
 #if MAEMO
     static bool touch = true; // touch screen interface
@@ -169,14 +233,13 @@ class Browser : Gtk.Window
     void show_image()
     {
         if(iter.get() == null) {
-            stdout.printf("show_image() called with null pointer.\n");
-            Gtk.main_quit();
+            main_quit();
         }
         try
         {
             string filename = iter.get();
             Gdk.Pixbuf pixbuf =
-                new Pixbuf.from_file_at_size(filename, width, height);
+                zipsource.get_pixbuf_at_size(filename, width, height);
             image.set_from_pixbuf(pixbuf);
         } catch(GLib.Error e) {
         }
@@ -198,121 +261,20 @@ class Browser : Gtk.Window
         return true;
     }
 
-    bool prev_path(bool again=true)
+    bool prev_path()
     {
-        string path = null;
-        string filename = iter.get();
-        string firstfile = filename; // used to check for loop
-
-        if(filename == null)
-          return false;
-        path = Path.get_dirname(filename);
-        do
-        {
+        for(var i=0; i<10; i++)
             iter.prev();
-            if(iter.get() == filename) // only one image in list (or repeated img)
-                return false;
-            filename = iter.get();
-        } while(Path.get_dirname(filename) == path && firstfile != filename);
-        if(firstfile == filename) { // only one path, goto start
-            iter.first();
-            counter = 0;
-            show_image();
-            return true;
-        }
-        if(again) {
-          prev_path(false);
-          iter.next();
-          counter = 0;
-          show_image();
-          return true;
-        }
-        return false;
+        show_image();
+        return true;
     }
 
     bool next_path()
     {
-        string path = null;
-        string filename = iter.get();
-        string firstfile = filename; // used to check for loop
-
-        if(filename == null)
-            return false;
-        path = Path.get_dirname(filename);
-        do
-        {
+        for(var i=0; i<10; i++)
             iter.next();
-            if(iter.get() == filename) // only one image in list (or repeated img)
-                return false;
-            filename = iter.get();
-        } while(Path.get_dirname(filename) == path && firstfile != filename);
-        counter = 0;
         show_image();
         return true;
-    }
-
-    bool delete_path() {
-        string path = null;
-        string filename = iter.get();
-        string firstfilename = filename;
-
-        if(filename == null)
-            return false;
-        path = Path.get_dirname(filename);
-
-        if(verbose)
-            stdout.printf("Tagged for deletion: %s\n", path);
-
-        // find first image in this path
-        do {
-            iter.prev();
-            filename = iter.get();
-        } while(firstfilename != filename && path == Path.get_dirname(filename));
-
-        // we are now at the previous path, go forward one
-        iter.next();
-        assert (Path.get_dirname(iter.get()) == path);
-
-        filename = iter.get();
-        while(filename != null && Path.get_dirname(filename) == path) {
-            deletelist.append(filename);
-            iter.delete();
-            filename = iter.get();
-        }
-
-        counter = 0;
-        show_image();
-        return true;
-    }
-
-    // once working, this will tag a file for deletion
-    void delete_image() {
-        string filename = iter.get();
-        if(null == filename)
-            return;
-        if(verbose)
-            stdout.printf("Tagged for deletion: %s\n", filename);
-        deletelist.append(filename);
-        iter.delete();
-        counter = 0;
-        show_image();
-        return;
-    }
-
-    void handle_deletelist() {
-        string path = null;
-        string lastpath = null;
-        foreach(string filename in deletelist) {
-            if(deleteokay) {
-                FileUtils.unlink(filename);
-            } else {
-                stdout.printf("rm \"%s\"\n", filename);
-            }
-            path = Path.get_dirname(filename);
-            if(path != lastpath && lastpath != null) {
-                FileUtils.remove(lastpath); // try to remove directory, ignore errors
-            }
-        }
     }
 
     bool on_timeout()
@@ -334,8 +296,6 @@ class Browser : Gtk.Window
             if(e.x <= p && e.y <= p) {
                 // top left
                 iconify();
-                main_iteration(); // will iconify if another event is queued?
-                handle_deletelist();
                 main_quit();
             } else if(e.x <= p && e.y >= (height-p)) {
                 // bottom left
@@ -369,8 +329,6 @@ class Browser : Gtk.Window
     {
         if(e.str == "q" || e.str == "Q") {
             iconify();
-            main_iteration();
-            handle_deletelist();
             Gtk.main_quit();
             return false;
         }
@@ -406,103 +364,14 @@ class Browser : Gtk.Window
             slideshow = false;
             iconify();
         }
-        else if((e.keyval == 0x64 || e.keyval == 0xffff) // d or delete key
-                && (e.state & Gdk.ModifierType.CONTROL_MASK) != 0)
-        {
-            // control-d
-            delete_path();
-        }
-        else if(e.keyval == 0x64 || e.keyval == 0xffff) { // d or delete key
-            delete_image();
-        }
         else if(e.str == "/" || e.str == "?") {
             stdout.printf("%s\n", iter.get());
         }
         return true;
     } // on_keypress
 
-    /*
-     * Handle walking directories, and matching specific filenames
-     */
-
-    public static int get_last_int_in_string(string s)
-    {
-        int last, first;
-        for(last=(int)s.length-1; last >= 0 && !s[last].isdigit(); last -= 1)
-            ;
-        last += 1;
-        if(last <= 0)
-            return -1;
-        for(first=last-1; first >= 0 && s[first].isdigit(); first -= 1)
-            ;
-        first += 1;
-        return s.substring(first, last-first).to_int();
-    }
-
-
-    public static int ImageSorter (string va, string vb) {
-        string a = Path.get_basename(va);
-        string b = Path.get_basename(vb);
-
-        int na = get_last_int_in_string(a);
-        int nb = get_last_int_in_string(b);
-        if(na == -1 || nb == -1) {
-            if(a > b) return 1;
-            if(a== b) return 0;
-            return 0;
-        }
-        if(na == nb)
-            return 0;
-        if(na > nb)
-            return 1;
-        return -1;
-    }
-
-    private delegate bool matcher(string s);
-
-    private static void resultwalker(string dir, matcher m, ref GLib.List<string> result) {
-        try {
-            Dir d = Dir.open(dir);
-            string[] dirlist = new string[64];
-            int dirlen = 0;
-            string s = null;
-            var filenames = new GLib.List<string> ();
-            while((s = d.read_name()) != null) {
-                if(s == ".." || s == ".")
-                    continue;
-                string fs = Path.build_filename(dir, s);
-                if(FileUtils.test(fs, FileTest.IS_DIR)) {
-                    if(dirlen >= dirlist.length)
-                        dirlist.resize(dirlist.length + 64);
-                    dirlist[dirlen] = fs;
-                    dirlen++;
-                } else if(FileUtils.test(fs, FileTest.IS_REGULAR)) {
-                    if(m(fs))
-                        filenames.insert_sorted(fs, (GLib.CompareFunc)ImageSorter);
-                }
-            }
-            foreach(string fn in filenames) {
-                result.append(fn);
-            }
-            dirlist.resize(dirlen);
-            if(random) {
-                for(int i=0; i<dirlen; i++) {
-                    string tmp = dirlist[i];
-                    int ran = GLib.Random.int_range(0, dirlen);
-                    dirlist[i] = dirlist[ran];
-                    dirlist[ran] = tmp;
-                }
-            }
-            foreach(string dd in dirlist) {
-                resultwalker(dd, m, ref result);
-            }
-        } catch(GLib.FileError e) { 
-        }
-    }
-
     const OptionEntry[] options = {
         { "verbose", 'v', 0, OptionArg.NONE, ref verbose, "Be verbose", null },
-        { "delete", 'd', 0, OptionArg.NONE, ref deleteokay, "Enable delete functionality.", null },
         { "slideshow", 's', 0, OptionArg.NONE, ref slideshow, "Start in slideshow mode", null },
 #if !MAEMO
         { "touchscreen", 't', 0, OptionArg.NONE, ref touch, "Enable touchscreen/clicking interface", null },
@@ -510,6 +379,17 @@ class Browser : Gtk.Window
         { "random", 'r', 0, OptionArg.NONE, ref random, "Randomise the order of sub-directories of images", null },
         { null }
     };
+
+    public static string file_chooser() {
+        var dialog = new FileChooserDialog("Select archive", null, FileChooserAction.OPEN);
+        var filter = new FileFilter();
+        filter.add_pattern("*.zip");
+        filter.add_pattern("*.tar");
+        filter.add_pattern("*.tar.gz");
+        dialog.set_filter(filter);
+        dialog.local_only = true;
+        return dialog.get_filename();
+    }
 
     public static int main(string[] args)
     {
@@ -526,8 +406,6 @@ class Browser : Gtk.Window
   PageDown       progress to the next directory of images
   PageUp         progress to the start of the previous directory of images
   s              disable/enable the slideshow mode
-  d              delete current image (or print to stdout if -d not given)
-  ctrl-d         delete all images in current images path (or print as above)
   / or ?         print the current image's location on standard output""");
         context.add_main_entries(options, null);
         context.add_group(Gtk.get_option_group(true));
@@ -553,16 +431,10 @@ class Browser : Gtk.Window
         var browser = new Browser();
         Gtk.main_iteration(); // show the window
 
-        GLib.List<string> *imgs = (GLib.List<string>)new GLib.List<string> ();
+        browser.zipsource = new ZipSource(args[1]);
+        var imgs = browser.zipsource.filelist();
 
-        for(int arg=1; arg<args.length; arg++) {
-            resultwalker(args[arg], (a) =>
-            {
-                string tmp = a.down();
-                return tmp.has_suffix(".jpg") || tmp.has_suffix(".jpeg");
-            }, ref imgs);
-        }
-        browser.iter = new CircularIter<string>((owned)imgs);
+        browser.iter = new CircularIter<string>(imgs);
         browser.show_image();
         browser.show_all();
         Gtk.main();
