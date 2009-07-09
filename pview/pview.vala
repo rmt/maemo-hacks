@@ -556,11 +556,17 @@ class Browser : Gtk.Window
         GLib.List<string> *imgs = (GLib.List<string>)new GLib.List<string> ();
 
         for(int arg=1; arg<args.length; arg++) {
-            resultwalker(args[arg], (a) =>
-            {
-                string tmp = a.down();
-                return tmp.has_suffix(".jpg") || tmp.has_suffix(".jpeg");
-            }, ref imgs);
+            if(FileUtils.test(args[arg], FileTest.IS_DIR)) {
+                resultwalker(args[arg], (a) =>
+                {
+                    string tmp = a.down();
+                    return tmp.has_suffix(".jpg") || tmp.has_suffix(".jpeg");
+                }, ref imgs);
+            } else if(FileUtils.test(args[arg], FileTest.IS_REGULAR)) {
+                string tmp = args[arg].down();
+                if(tmp.has_suffix(".jpg") || tmp.has_suffix(".jpeg"))
+                    imgs->append(args[arg]);
+            }
         }
         browser.iter = new CircularIter<string>((owned)imgs);
         browser.show_image();
