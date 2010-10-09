@@ -367,7 +367,7 @@ class Browser : Gtk.Window
 
     bool on_keypress(Browser b, Gdk.EventKey e)
     {
-        if(e.str == "q" || e.str == "Q") {
+        if(e.str == "q" || e.str == "Q" || e.keyval == 0xff08 /*backspace*/) {
             iconify();
             main_iteration();
             handle_deletelist();
@@ -394,7 +394,7 @@ class Browser : Gtk.Window
         else if(e.keyval == 0xff54) { // down arrow
             countermax += 1;
         }
-        else if(e.keyval == 0x73) {
+        else if(e.keyval == 0x73 /*s*/ || e.keyval == 0xff0d /*enter*/) {
             slideshow = !slideshow;
             counter = 0;
         }
