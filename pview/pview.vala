@@ -101,8 +101,8 @@ class CircularIter<G> : GLib.Object {
 
 class Browser : Gtk.Window
 {
-    int width = 0; // screen.width
-    int height = 0; // screen.height
+    int width = 1024; // screen.width, sensible default
+    int height = 768; // screen.height, sensible default
     Gtk.Image image;
     private GLib.List<string> deletelist = new GLib.List<string> ();
     private CircularIter<string> iter;
@@ -131,10 +131,6 @@ class Browser : Gtk.Window
 
     construct
     {
-        var screen = get_screen();
-        width = screen.get_width();
-        height = screen.get_height();
-
         var ebox = new Gtk.EventBox();
         image = new Gtk.Image();
 
@@ -145,18 +141,25 @@ class Browser : Gtk.Window
 
         ebox.add(image);
         add(ebox);
-        destroy += Gtk.main_quit;
+        destroy.connect(Gtk.main_quit);
         title = "PView";
         fullscreen();
 
         Timeout.add(TICK, on_timeout);
-        key_press_event += on_keypress;
+        key_press_event.connect(on_keypress);
 
         // this should enable basic use on touchscreen devices
         if(touch)
-            ebox.button_press_event += on_button_down;
+            ebox.button_press_event.connect(on_button_down);
 
         show_all(); // need to do this here so we can blank the cursor
+
+        // get width and height of this monitor geometry
+        var screen = get_screen();
+        Gdk.Rectangle monitor;
+        screen.get_monitor_geometry(screen.get_monitor_at_window(this.get_window()), out monitor);
+        height = monitor.height;
+        width = monitor.width;
 
 #if !MAEMO
         // hide cursor
@@ -326,7 +329,7 @@ class Browser : Gtk.Window
         return next_image();
     }
 
-    bool on_button_down(EventBox w, Gdk.EventButton e) {
+    bool on_button_down(Gdk.EventButton e) {
             // p defines the clickable area
             int p = (height / 3);
             if(width < height)
@@ -365,7 +368,7 @@ class Browser : Gtk.Window
             return true;
     }
 
-    bool on_keypress(Browser b, Gdk.EventKey e)
+    bool on_keypress(Gdk.EventKey e)
     {
         if(e.str == "q" || e.str == "Q" || e.keyval == 0xff08 /*backspace*/) {
             iconify();
@@ -436,7 +439,7 @@ class Browser : Gtk.Window
         for(first=last-1; first >= 0 && s[first].isdigit(); first -= 1)
             ;
         first += 1;
-        return s.substring(first, last-first).to_int();
+        return int.parse(s.substring(first, last-first));
     }
 
 
